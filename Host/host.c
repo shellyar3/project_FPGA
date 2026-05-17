@@ -33,3 +33,4 @@ void send_pe_command(int serial_fd, PE_input inpt) {
     read(serial_fd, &result, 1);
     printf("PE Result Received: %d\n", result);
 }
+
