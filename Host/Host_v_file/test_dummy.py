@@ -1,31 +1,71 @@
 import serial
-import struct
 import time
+import random
 
-ser = serial.Serial('COM5', 115200, timeout=2)
-time.sleep(1.5) # Wait for hardware reset stability
+PORT = 'COM5'
+BAUD_RATE = 115200
+NUM_TESTS = 20  # Number of random operations to run
 
-def test_dummy_pe(a, b, select=True, valid=True):
-    # Control pattern: {chp_slct, valid_in, 3'b0, op_code[2:0]}
-    ctrl_byte = (int(select) << 7) | (int(valid) << 6) | 0x00
+def run_verification_suite():
+    print(f"==================================================")
+    print(f"STARTING HARDWARE DUMMY PE VERIFICATION SUITE")
+    print(f"Target Port: {PORT} | Total Test Iterations: {NUM_TESTS}")
+    print(f"==================================================")
     
-    packet = struct.pack('>BII', ctrl_byte, a, b)
-    ser.write(packet)
-    ser.flush()
-    
-    status_byte = ser.read(1)
-    data_byte = ser.read(1)
-    
-    if data_byte:
-        print(f"Sent: A={a}, B={b} | CS Status={select}")
-        print(f"Returned Output Byte: {ord(data_byte)}")
-    else:
-        print("Communication timeout. Check FPGA connection rails.")
+    try:
+        ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
+        time.sleep(1.5) # Allow driver to stabilize
+        
+        passed_tests = 0
+        
+        for i in range(1, NUM_TESTS + 1):
+            # 1. Generate random 32-bit integer values (restricted to 0-100 for easy dummy overflow safety)
+            val_A = random.randint(0, 100)
+            val_B = random.randint(0, 100)
+            
+            # The dummy PE simply adds the lower 8-bits: (A + B) & 0xFF
+            expected_result = (val_A + val_B) & 0xFF
+            
+            # 2. Package into big-endian byte structures
+            header = b'\xC0' # chp_slct=1, valid_in=1
+            op_A_bytes = val_A.to_bytes(4, byteorder='big')
+            op_B_bytes = val_B.to_bytes(4, byteorder='big')
+            tx_packet = header + op_A_bytes + op_B_bytes
+            
+            # 3. Clear buffers and send
+            ser.reset_input_buffer()
+            ser.write(tx_packet)
+            ser.flush()
+            
+            # Small execution window delay
+            time.sleep(0.05)
+            
+            # 4. Read response
+            response = ser.read(2)
+            
+            if len(response) == 2:
+                status_byte = response[0]
+                actual_result = response[1]
+                
+                # Check calculation accuracy
+                if actual_result == expected_result:
+                    print(f"Test {i:02d}: PASSED | A={val_A:<3} B={val_B:<3} | Expected={expected_result:<3} Got={actual_result:<3}")
+                    passed_tests += 1
+                else:
+                    print(f"Test {i:02d}: FAILED ❌ | A={val_A:<3} B={val_B:<3} | Expected={expected_result:<3} Got={actual_result:<3}")
+            else:
+                print(f"Test {i:02d}: TIMEOUT ⚠️ | Hardware failed to respond in time.")
+                
+        ser.close()
+        
+        # Final Report Summary
+        print(f"==================================================")
+        print(f"VERIFICATION SUITE COMPLETE")
+        print(f"Passed: {passed_tests}/{NUM_TESTS} ({passed_tests/NUM_TESTS*100:.1f}%)")
+        print(f"==================================================")
+        
+    except Exception as e:
+        print(f"Error during execution: {e}")
 
-print("--- RUNNING HARDWARE DUMMY STUB LOOPBACK ---")
-# Test Case A: Active Chip Select (Should Add A + B)
-test_dummy_pe(10, 5, select=True) # Expected: 15
-
-# Test Case B: Gated Chip Select (Should ignore and return 0) 
-test_dummy_pe(20, 30, select=False) # Expected: 0 or previous result
-ser.close()
+if __name__ == "__main__":
+    run_verification_suite()
