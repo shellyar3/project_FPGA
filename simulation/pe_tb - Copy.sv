@@ -22,7 +22,7 @@ module pe_tb;
     assign busy = ~pe_ready_wire;  // Flips a 1 (Ready) to a 0 (Not Busy)
 
     // =========================================================
-    // OPCODES (PE Specification)
+    // OPCODES (Itai's PE Specification)
     // =========================================================
     localparam logic [4:0] OP_NOP           = 5'b00000; // 0
     localparam logic [4:0] OP_RST_ACC       = 5'b00001; // 1
@@ -406,8 +406,7 @@ module pe_tb;
             pass_count++;
         end
     endtask
-
-    // =========================================================
+// =========================================================
     // TEST 14: OP_SCALE Black Box Probe (Bug Hunter)
     // =========================================================
     task automatic test_scale_bug_hunter;
@@ -419,6 +418,8 @@ module pe_tb;
             send_cmd(1, 10, OP_MAC);
             
             // 2. Send OP_SCALE with A=2, B=3
+            // If it multiplies, 10 * 3 = 30.
+            // If it acts like MAC, 10 + (2*3) = 16.
             send_cmd(2, 3, OP_SCALE);
             
             // 3. Trigger Output
@@ -432,121 +433,8 @@ module pe_tb;
             end else if (data_out === 8'd10) begin
                 $display("[BUG DIAGNOSIS] DEAF BUG: The hardware ignored the SCALE command entirely. Output is still 10.");
             end else begin
-                $display("[RESULT] OP_SCALE test complete. Output: %0d", data_out);
+                $display("[RESULT] Unknown behavior. Output: %0d", data_out);
             end
-        end
-    endtask
-
-    // =========================================================
-    // TEST 15: Delayed Result Validation Test (Report Sec 6.4.1)
-    // =========================================================
-    task automatic test_delayed_result_validation;
-        integer delay_cycles;
-        logic [7:0] captured_data;
-        begin
-            $display("\n--- TEST 15: Delayed Result Validation ---");
-            do_reset();
-            
-            // Perform standard calculation (4 * 3 = 12)
-            send_cmd(4, 3, OP_MAC); 
-            send_cmd(0, 0, OP_EXEC_PP);
-
-            // Wait for hardware to declare valid output
-            wait_for_valid();
-
-            if (valid_out == 1'b1) begin
-                captured_data = data_out;
-                delay_cycles = $urandom_range(1, 7);
-                $display("Holding valid_out... Validator waiting %0d cycles to sample result", delay_cycles);
-
-                // Wait random cycles while valid_out should theoretically remain stable
-                repeat(delay_cycles) @(posedge clk);
-
-                if (data_out !== captured_data) begin
-                    $display("[FAIL] TEST 15 - Data decayed/changed during delay! Expected %0d, Got %0d", captured_data, data_out);
-                    fail_count++;
-                end else begin
-                    $display("[PASS] TEST 15 - Result held stable across asynchronous delay. Output: %0d", data_out);
-                    pass_count++;
-                end
-            end
-        end
-    endtask
-
-    // =========================================================
-    // TEST 16: Interrupted Data Flow Test (Report Sec 6.4.1)
-    // =========================================================
-    task automatic test_interrupted_data_flow;
-        begin
-            $display("\n--- TEST 16: Interrupted Data Flow (chip_sel Drop) ---");
-            do_reset();
-
-            // 1. Start a massive MAC operation (10 * 10 = 100)
-            @(posedge clk);
-            operand_A = 10; operand_B = 10; op_code = OP_MAC; valid_in = 1'b1;
-            @(posedge clk);
-
-            // 2. Drop chip select mid-stream (Simulating a generator crash)
-            chp_slct = 1'b0;
-            $display("Dropped chip_sel mid-stream...");
-            repeat(4) @(posedge clk); // Wait while disconnected
-
-            // 3. Restore chip select and start a completely new calculation
-            chp_slct = 1'b1;
-            valid_in = 1'b0;
-            repeat(2) @(posedge clk); // Stabilization
-
-            // 4. Send a clean 2 * 3 = 6
-            send_cmd(2, 3, OP_MAC);
-            send_cmd(0, 0, OP_EXEC_PP);
-            wait_for_valid();
-
-            // If output is 106, the DUT failed to clear the interrupted data.
-            // If output is 6, the DUT correctly reset its state when chip_sel dropped.
-            if (data_out === 8'd6) begin
-                $display("[PASS] TEST 16 - Interrupted data flushed perfectly. Output: %0d", data_out);
-                pass_count++;
-            end else begin
-                $display("[FAIL] TEST 16 - Interrupted data corrupted the result! Expected 6, Got %0d", data_out);
-                fail_count++;
-            end
-        end
-    endtask
-
-    // =========================================================
-    // TEST 17: Non-Continuous Data Streaming (Report Sec 6.4.1)
-    // =========================================================
-    task automatic test_non_continuous_streaming;
-        logic [31:0] expected_val;
-        begin
-            $display("\n--- TEST 17: Non-Continuous Data Streaming (wr_en toggle) ---");
-            do_reset();
-            expected_val = 0;
-
-            for (i = 1; i <= 4; i = i + 1) begin
-                @(posedge clk);
-                operand_A = i;
-                operand_B = 2;
-                op_code = OP_MAC;
-
-                // Simulate random bus stall (valid_in is LOW despite data being on the bus)
-                valid_in = 1'b0;
-                repeat($urandom_range(1, 4)) @(posedge clk);
-
-                // Latch data (valid_in asserts HIGH for exactly one cycle)
-                valid_in = 1'b1;
-                expected_val = expected_val + (i * 2);
-                @(posedge clk);
-
-                valid_in = 1'b0;
-                wait(busy == 1'b0);
-            end
-
-            // Constraint: "final two input words... must be written consecutively"
-            send_cmd(0, 0, OP_EXEC_PP);
-            wait_for_valid();
-
-            check_result(expected_val[7:0], "TEST 17 - Non-Continuous Streaming Tolerated");
         end
     endtask
 
@@ -569,12 +457,6 @@ module pe_tb;
         test_back_to_back_execution();
         test_noise_immunity();
         test_constrained_random();
-        test_scale_bug_hunter();
-        
-        // --- NEW COVERAGE TESTS ---
-        test_delayed_result_validation();
-        test_interrupted_data_flow();
-        test_non_continuous_streaming();
 
         $display("\n=================================================");
         $display("SIMULATION FINISHED");

@@ -12,7 +12,7 @@ module control(
 );
 
     // Continuous assignment ensures an instant, reliable system reset
-    assign rst = ~key[0];
+    assign rst = key[0];
 
     always @(posedge clk) begin
         ledr[7:0] <= 8'b10101010;

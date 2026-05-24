@@ -14,7 +14,7 @@ module UART_top (
     // DUT Interconnect Lines
     wire [31:0] op_A, op_B;
     wire        val_in, chp_slct, busy, val_out;
-    wire [2:0]  op_code;
+    wire [4:0]  op_code;               
     wire [7:0]  pe_data_out;
 
     // Pulse monitoring system
@@ -60,17 +60,19 @@ module UART_top (
     );
 
     // Device Under Test (DUT) Instance Boundary
-    processing_element DUT (
-        .clk(MAX10_CLK1_50),
-        .rst(reset),
-        .operand_A(op_A),
-        .operand_B(op_B),
-        .valid_in(val_in),
-        .chp_slct(chp_slct),
-        .op_code(op_code),
-        .busy(busy),
-        .valid_out(val_out),
-        .data_out(pe_data_out)
+    PE DUT (
+        .clk          (MAX10_CLK1_50), 
+        .rst          (reset),         
+        .chp_slct     (chp_slct),      
+        .pe_opcode    (op_code),       
+        .valid_opcode (val_in),        
+        .valid_A      (val_in),        
+        .valid_B      (val_in),        
+        .operand_A    (op_A),          
+        .operand_B    (op_B),          
+        .data_out     (pe_data_out),   
+        .pe_ready     (busy),          
+        .valid_output (val_out)        
     );
 
 endmodule
